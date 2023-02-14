@@ -1,0 +1,237 @@
+proc sql;
+
+create table merchant as
+
+select a.*, b.*
+
+from performance_dataset a
+
+left join merchant_category_mapping b
+
+on a.merchant_id=b.merchant_id;
+
+run;
+
+ 
+
+data merchant;
+
+set merchant;
+
+repayment_variance=actual_repayment_pct-predicted_repayment_pct;
+
+loan_amount_variance=avg_auth_amt-avg_loan_amt;
+
+profit=(avg_apr-(1-actual_repayment_pct))*avg_loan_amt*num_trxn*avg_term;
+
+if actual_repayment_pct=1 then default=0; else default=1;
+
+if profit<0 then loss=1;else loss=0;
+
+run;
+
+ 
+
+proc means data=merchant;run;
+
+proc contents data=merchant;run;
+
+ 
+
+proc sql;
+
+create table profit_summary as
+
+select category,
+
+       subcategory,
+
+                 sum(profit) as profit,
+
+                 count(*) as volume,
+
+                 sum(default) as default_count,
+
+                 sum(loss) as loss_count
+
+from merchant
+
+group by 1,2
+
+order by 1,2
+
+;
+
+quit;
+
+run;
+
+ 
+
+proc sgplot data=profit_summary;
+
+   title "Merchant Profit and Volume by Category";
+
+   vbar category / response=profit;
+
+   vline category / response=volume y2axis;
+
+run;
+
+ 
+
+proc sgplot data=profit_summary;
+
+   title "Merchant Profit and Volume by Subcategory";
+
+   vbar subcategory / response=profit;
+
+   vline subcategory / response=volume y2axis;
+
+run;
+
+ 
+
+proc sgplot data=profit_summary;
+
+   title "Merchant Default and Loss Count by Category";
+
+   vbar category / response=default_count;
+
+   vline category / response=loss_count y2axis;
+
+run;
+
+ 
+
+proc sgplot data=profit_summary;
+
+   title "Merchant Default and Loss Count by Subcategory";
+
+   vbar subcategory / response=default_count;
+
+   vline subcategory / response=loss_count y2axis;
+
+run;
+
+title;
+
+ 
+
+ 
+
+/*Create random forest model-repayment variance*/
+
+%let num= avg_apr
+
+avg_auth_amt
+
+avg_fico
+
+avg_loan_amt
+
+avg_term
+
+num_trxn
+
+;
+
+ 
+
+%let char=category
+
+subcategory
+
+;
+
+ 
+
+proc hpforest data=merchant
+
+        seed=42
+
+        /*vars_to_try=42
+
+        maxtrees=500
+
+        trainfraction=0.6  USE DEFAULT VALUES FOR INITIAL RF MODEL
+
+        maxdepth=15
+
+        leafsize=20
+
+        alpha=0.15 */
+
+        ;
+
+        target repayment_variance / level=interval;
+
+        input &num. / level=interval;
+
+        input &char. / level=nominal;
+
+        ods output fitstatistics = fitstats(rename=(Ntrees=Trees));
+
+                             ods output VariableImportance = Variable_Importance;
+
+        ods output Baseline = Baseline;
+
+run;
+
+ 
+
+/*Create random forest model-loan amount variance*/
+
+%let num= actual_repayment_pct
+
+avg_apr
+
+avg_fico
+
+avg_term
+
+num_trxn
+
+predicted_repayment_pct
+
+;
+
+ 
+
+%let char=category
+
+subcategory
+
+;
+
+proc hpforest data=merchant
+
+        seed=42
+
+        /*vars_to_try=42
+
+        maxtrees=500
+
+        trainfraction=0.6  USE DEFAULT VALUES FOR INITIAL RF MODEL
+
+        maxdepth=15
+
+        leafsize=20
+
+        alpha=0.15 */
+
+        ;
+
+        target repayment_variance / level=interval;
+
+        input &num. / level=interval;
+
+        input &char. / level=nominal;
+
+        ods output fitstatistics = fitstats(rename=(Ntrees=Trees));
+
+                             ods output VariableImportance = Variable_Importance;
+
+        ods output Baseline = Baseline;
+
+run;
