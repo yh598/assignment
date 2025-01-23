@@ -1,0 +1,70 @@
+import re
+import pandas as pd
+
+def parse_relationship(relationship_str):
+    """
+    Parses a string like:
+      (cap=(0123456789, 0123456780), address=(123 Main St, 456 Side St), phone=(123-4567))
+    into a Python dict, e.g.:
+      {
+        'cap': ['0123456789', '0123456780'],
+        'address': ['123 Main St', '456 Side St'],
+        'phone': ['123-4567']
+      }
+    """
+    if pd.isna(relationship_str) or not isinstance(relationship_str, str):
+        return {}
+    
+    # Regex pattern to capture key=(value1, value2, ...)
+    pattern = re.compile(r'(\w+)=\((.*?)\)')
+    
+    result = {}
+    matches = pattern.findall(relationship_str)
+    for key, val_str in matches:
+        # Split the contents inside the parentheses by comma
+        items = [item.strip() for item in val_str.split(",")]
+        # Remove empty strings, if any
+        items = [x for x in items if x]
+        result[key] = items
+    
+    return result
+
+# ------------------------------------------------------------------------------
+# 1. LOAD THE CSV
+# ------------------------------------------------------------------------------
+# Adjust the file path and CSV name to match your data
+df = pd.read_csv("syntheticData-sample.csv", dtype=str)
+
+# ------------------------------------------------------------------------------
+# 2. PARSE THE 'relationship' COLUMN INTO A DICT
+# ------------------------------------------------------------------------------
+parsed_series = df["relationship"].apply(parse_relationship)
+# Now parsed_series is a pandas Series of dictionaries
+
+# ------------------------------------------------------------------------------
+# 3. EXPAND THOSE DICTIONARIES INTO NEW COLUMNS
+# ------------------------------------------------------------------------------
+# Each key (e.g., 'cap', 'address', 'phone') becomes a new column,
+# containing a list of values (if multiple).
+parsed_df = parsed_series.apply(pd.Series)
+
+# Combine with the original DataFrame
+df_expanded = pd.concat([df, parsed_df], axis=1)
+
+# ------------------------------------------------------------------------------
+# 4. (OPTIONAL) FLATTEN LIST COLUMNS INTO A SINGLE STRING
+# ------------------------------------------------------------------------------
+# For columns like 'cap', 'address', 'phone', etc.
+for col in parsed_df.columns:
+    df_expanded[col] = df_expanded[col].apply(
+        lambda x: ", ".join(x) if isinstance(x, list) else x
+    )
+
+# ------------------------------------------------------------------------------
+# 5. SAVE OR CONTINUE ANALYSIS
+# ------------------------------------------------------------------------------
+print(df_expanded.head())
+
+# If you want to save to a CSV:
+df_expanded.to_csv("syntheticData_expanded.csv", index=False)
+print("Expanded data saved to 'syntheticData_expanded.csv'.")
