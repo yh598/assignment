@@ -1,0 +1,87 @@
+def parse_gml_subset(infile, max_nodes=10000):
+    """
+    Reads up to max_nodes from a GML file, plus any edges connecting those nodes.
+    Returns a small GML string in memory (or you could write it out directly).
+    """
+    out_lines = []
+    inside_node = False
+    inside_edge = False
+    node_count = 0
+    node_ids = set()
+    current_node_id = None
+
+    with open(infile, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+
+            # Detect start of 'node ['
+            if stripped.startswith("node ["):
+                inside_node = True
+                current_node_id = None
+                out_lines.append(line)  # copy line
+                continue
+
+            # Detect end of node block
+            if inside_node and stripped.startswith("]"):
+                inside_node = False
+                out_lines.append(line)
+                # If we did parse a valid node, increment node_count
+                if current_node_id is not None:
+                    node_count += 1
+                continue
+
+            if inside_node:
+                out_lines.append(line)
+                # Attempt to parse e.g. "id 123"
+                if stripped.startswith("id "):
+                    # e.g. "id 123"
+                    parts = stripped.split()
+                    if len(parts) == 2:
+                        current_node_id = parts[1]
+                        node_ids.add(current_node_id)
+                # If we already have max_nodes, ignore further node definitions
+                if node_count >= max_nodes:
+                    # We won't break immediately because we need to properly parse
+                    # the "]" line that ends this node block.
+                    pass
+                continue
+
+            # Similarly for edges
+            if stripped.startswith("edge ["):
+                inside_edge = True
+                edge_buffer = [line]
+                continue
+            if inside_edge:
+                edge_buffer.append(line)
+                if stripped.startswith("]"):
+                    # edge block ended
+                    inside_edge = False
+                    # Now parse that edge to see if it references known node_ids
+                    # If both source & target are in node_ids, we keep it
+                    keep_edge = False
+                    src_id = None
+                    tgt_id = None
+                    for l in edge_buffer:
+                        st = l.strip()
+                        if st.startswith("source "):
+                            src_id = st.split()[1]
+                        elif st.startswith("target "):
+                            tgt_id = st.split()[1]
+                    if src_id in node_ids and tgt_id in node_ids:
+                        # keep it
+                        out_lines.extend(edge_buffer)
+                    edge_buffer = []
+                continue
+
+            # If none of the above, just copy top-level lines (like 'graph [', etc.)
+            out_lines.append(line)
+
+            # If we've reached max_nodes, we don't parse new node blocks once node_count≥max_nodes
+
+    # We have a partial GML in out_lines
+    return "".join(out_lines)
+
+# Usage example:
+subset_gml_str = parse_gml_subset("large_graph.gml", max_nodes=10000)
+with open("subset_10000_nodes.gml", "w", encoding="utf-8") as f:
+    f.write(subset_gml_str)
