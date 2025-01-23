@@ -37,3 +37,166 @@ for phone in phones_of_interest:
 
 SG = G.subgraph(sub_nodes).copy()
 nx.write_gexf(SG, "suspicious_phones_subgraph.gexf")
+
+import networkx as nx
+import matplotlib.pyplot as plt
+import statistics
+from collections import Counter, defaultdict
+
+def load_graph(gml_file):
+    """
+    Loads the graph from a GML file. Adjust as needed (e.g., read_gexf, etc.).
+    """
+    G = nx.read_gml(gml_file)
+    return G
+
+def print_basic_info(G):
+    """
+    Prints basic info about the graph: number of nodes/edges, sample nodes,
+    node-type counts, average degree, etc.
+    """
+    print(f"Nodes: {G.number_of_nodes()}")
+    print(f"Edges: {G.number_of_edges()}")
+    
+    # Show a small sample of nodes with their data
+    sample_nodes = list(G.nodes(data=True))[:5]
+    print("\nSample of nodes:", sample_nodes)
+    
+    # Count how many nodes of each type
+    type_counts = Counter(d["type"] for _, d in G.nodes(data=True) if "type" in d)
+    print("\n# Node type counts")
+    print(type_counts)
+    
+    # Degree stats
+    deg_list = [G.degree(n) for n in G.nodes()]
+    avg_deg = statistics.mean(deg_list) if len(deg_list) > 0 else 0
+    print(f"\nAverage degree: {avg_deg}")
+
+def find_suspicious_nodes(G, node_types_to_check, fraud_threshold=1):
+    """
+    For each node in node_types_to_check, count how many neighbors are fraudsters.
+    If it exceeds 'fraud_threshold', mark the node as suspicious.
+    
+    Returns a list of (node, fraud_count).
+    """
+    suspicious = []
+    
+    for n, data in G.nodes(data=True):
+        ntype = data.get("type")
+        if ntype in node_types_to_check:
+            # Count neighbors that are labeled 'fraudster'
+            fraud_count = sum(1 for nb in G.neighbors(n) if G.nodes[nb].get("type") == "fraudster")
+            if fraud_count > fraud_threshold:
+                suspicious.append((n, fraud_count))
+    
+    # Sort descending by fraud_count
+    suspicious.sort(key=lambda x: x[1], reverse=True)
+    return suspicious
+
+def build_suspicious_subgraph(G, suspicious_lists, min_fraud=2):
+    """
+    Combine suspicious nodes from multiple lists into one subgraph.
+    'min_fraud' is just a label for the threshold, used in printing.
+    
+    suspicious_lists: dict of { 'phone': [...], 'address': [...], etc. }
+                      each value is a list of (node, fraud_count).
+    """
+    # Consolidate all suspicious nodes across lists
+    suspicious_nodes = set()
+    for node_type, node_list in suspicious_lists.items():
+        for (node, fraud_count) in node_list:
+            suspicious_nodes.add(node)
+    
+    # Expand to include neighbors? (Optional)
+    # If you want to keep only the suspicious nodes themselves, skip this step.
+    # But often we add neighbors to see the context:
+    sub_nodes = set(suspicious_nodes)
+    for node in suspicious_nodes:
+        for nb in G.neighbors(node):
+            sub_nodes.add(nb)
+    
+    SG = G.subgraph(sub_nodes).copy()
+    print(f"Suspicious subgraph (threshold > {min_fraud} fraudsters) has {SG.number_of_nodes()} nodes, {SG.number_of_edges()} edges.")
+    return SG
+
+def visualize_subgraph(SG, max_nodes=2000, title="Suspicious Subgraph"):
+    """
+    Quick Matplotlib visualization for smaller subgraphs.
+    """
+    n_nodes = SG.number_of_nodes()
+    if n_nodes > max_nodes:
+        print(f"Subgraph has {n_nodes} nodes, which is too large to plot here. Skipping visualization.")
+        return
+    
+    plt.figure(figsize=(12,8))
+    pos = nx.spring_layout(SG, k=0.3, seed=42)
+    node_colors = []
+    for node in SG.nodes():
+        t = SG.nodes[node].get("type", "other")
+        if t == "fraudster":
+            node_colors.append("red")
+        elif t == "phone":
+            node_colors.append("blue")
+        elif t == "address":
+            node_colors.append("orange")
+        elif t == "cap":
+            node_colors.append("purple")
+        elif t == "email":
+            node_colors.append("green")
+        elif t == "visitor_id":
+            node_colors.append("yellow")
+        elif t == "member":
+            node_colors.append("gray")
+        else:
+            node_colors.append("black")
+    
+    nx.draw_networkx(
+        SG, pos=pos,
+        node_color=node_colors,
+        with_labels=False,
+        node_size=30,
+        edge_color="lightgray"
+    )
+    plt.title(title)
+    plt.axis("off")
+    plt.show()
+
+def main():
+    # 1) Load the graph
+    G = load_graph("audience-20241208.gml")
+    
+    # 2) Basic info
+    print_basic_info(G)
+    
+    # 3) Find suspicious nodes across different types
+    #    We'll consider phone, address, cap, email, visitor_id
+    #    suspicious if they connect to >1 fraudster
+    node_types_to_check = ["phone", "address", "cap", "email", "visitor_id"]
+    
+    suspicious_results = {}
+    for ntype in node_types_to_check:
+        suspicious_nodes = []
+        for n, d in G.nodes(data=True):
+            if d.get("type") == ntype:
+                # Count how many neighbors are fraudsters
+                fraud_count = sum(1 for nb in G.neighbors(n) if G.nodes[nb].get("type") == "fraudster")
+                if fraud_count > 1:
+                    suspicious_nodes.append((n, fraud_count))
+        suspicious_nodes.sort(key=lambda x: x[1], reverse=True)
+        suspicious_results[ntype] = suspicious_nodes
+        
+        print(f"\n=== Suspicious {ntype} nodes (linked to >1 fraudster) ===")
+        print(suspicious_nodes[:10])  # print top 10 for example
+    
+    # 4) Build a combined subgraph of all suspicious nodes
+    SG = build_suspicious_subgraph(G, suspicious_results, min_fraud=1)
+    
+    # 5) (Optional) Visualize if subgraph is small enough
+    visualize_subgraph(SG, max_nodes=2000, title="Suspicious Subgraph (Phones, Addresses, etc.)")
+    
+    # 6) (Optional) Export subgraph to GEXF for Gephi
+    nx.write_gexf(SG, "suspicious_subgraph.gexf")
+    print("Subgraph saved to suspicious_subgraph.gexf")
+
+if __name__ == "__main__":
+    main()
