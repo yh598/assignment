@@ -1,0 +1,39 @@
+import networkx as nx
+import matplotlib.pyplot as plt
+import statistics
+from collections import Counter, defaultdict
+
+# 1) Load the graph
+G = nx.read_gml("audience-20241208.gml")
+print("Nodes:", G.number_of_nodes())
+print("Edges:", G.number_of_edges())
+
+# 2) Node type counts
+type_counts = Counter(data["type"] for _, data in G.nodes(data=True) if "type" in data)
+print(type_counts)
+
+# 3) Degree stats
+deg_list = [G.degree(n) for n in G.nodes()]
+print("Average degree:", statistics.mean(deg_list))
+
+# 4) Check suspicious phone nodes
+suspicious_phones = []
+for n, d in G.nodes(data=True):
+    if d.get("type") == "phone":
+        fraud_count = sum(1 for nb in G.neighbors(n) if G.nodes[nb].get("type") == "fraudster")
+        if fraud_count > 1:
+            suspicious_phones.append((n, fraud_count))
+
+suspicious_phones.sort(key=lambda x: x[1], reverse=True)
+print("Top suspicious phones:", suspicious_phones[:10])
+
+# 5) Create a subgraph of suspicious phones & their neighbors
+phones_of_interest = [p for p, c in suspicious_phones if c > 5]
+sub_nodes = set()
+for phone in phones_of_interest:
+    sub_nodes.add(phone)
+    for nb in G.neighbors(phone):
+        sub_nodes.add(nb)
+
+SG = G.subgraph(sub_nodes).copy()
+nx.write_gexf(SG, "suspicious_phones_subgraph.gexf")
