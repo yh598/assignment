@@ -1,0 +1,58 @@
+import networkx as nx
+import pandas as pd
+from collections import Counter
+import statistics
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+
+# 1) Load Graph
+G = nx.read_gml("audience-20241208.gml")
+
+# 2) Assign labels: "fraudster" -> 1, else -> 0
+node_labels = []
+for n, data in G.nodes(data=True):
+    if data.get("type") == "fraudster":
+        node_labels.append((n, 1))
+    else:
+        node_labels.append((n, 0))
+df_labels = pd.DataFrame(node_labels, columns=["node_id", "label"])
+
+# 3) Extract simple features
+features = []
+for n, data in G.nodes(data=True):
+    deg = G.degree(n)
+    neighbor_types = Counter(G.nodes[nb].get("type", "unknown") for nb in G.neighbors(n))
+    n_fraud = neighbor_types["fraudster"]
+    n_phone = neighbor_types["phone"]
+    n_member = neighbor_types["member"]
+    
+    # If performance is slow, consider skipping or approximate
+    clust_coeff = nx.clustering(G, n)  
+    
+    features.append({
+        "node_id": n,
+        "degree": deg,
+        "fraudster_neighbors": n_fraud,
+        "phone_neighbors": n_phone,
+        "member_neighbors": n_member,
+        "clustering": clust_coeff
+    })
+
+df_features = pd.DataFrame(features)
+
+# 4) Merge features & labels
+df_merged = pd.merge(df_features, df_labels, on="node_id", how="inner")
+
+# 5) Train/Test Split
+X = df_merged.drop(["node_id", "label"], axis=1)
+y = df_merged["label"]
+X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
+
+# 6) Fit a Model
+clf = RandomForestClassifier(n_estimators=100, random_state=42)
+clf.fit(X_train, y_train)
+
+# 7) Evaluate
+y_pred = clf.predict(X_test)
+print(classification_report(y_test, y_pred, digits=4))
