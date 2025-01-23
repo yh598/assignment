@@ -1,0 +1,454 @@
+###############################################################################
+# fraud_knowledge_graph_pipeline.py
+#
+# A consolidated Python script illustrating:
+# 1) CSV ingestion & cleaning
+# 2) (Optional) fuzzy matching
+# 3) Building a knowledge graph in NetworkX
+# 4) Graph analytics (connected components, centrality, risk scoring)
+# 5) Visualization (matplotlib, PyVis, GEXF)
+# 6) (Optional) Uploading to Neo4j for large-scale graph management
+# 7) Exporting suspicious nodes for investigator review
+###############################################################################
+
+import os
+import re
+import time
+import pandas as pd
+import networkx as nx
+import matplotlib.pyplot as plt
+
+# For optional fuzzy matching (pip install rapidfuzz)
+try:
+    from rapidfuzz import process, fuzz
+    FUZZY_AVAILABLE = True
+except ImportError:
+    FUZZY_AVAILABLE = False
+
+# For optional Neo4j upload (pip install py2neo)
+try:
+    from py2neo import Graph as Neo4jGraph, Node, Relationship
+    NEO4J_AVAILABLE = True
+except ImportError:
+    NEO4J_AVAILABLE = False
+
+# For optional interactive visualization (pip install pyvis)
+try:
+    from pyvis.network import Network
+    PYVIS_AVAILABLE = True
+except ImportError:
+    PYVIS_AVAILABLE = False
+
+###############################################################################
+# 1) LOAD & CLEAN DATA
+###############################################################################
+def load_and_clean_data(csv_path):
+    """
+    Loads data from a CSV into a pandas DataFrame.
+    Performs basic cleaning on phone, email, and address columns.
+    Customize as needed for your schema.
+    """
+    df = pd.read_csv(csv_path, dtype=str)
+    
+    print("=== Data Overview ===")
+    print(df.info())
+    print(df.head())
+    
+    # Example cleaning for 'phone'
+    if "phone" in df.columns:
+        df["phone_clean"] = (
+            df["phone"]
+            .fillna("")
+            .str.replace(r"[^0-9]", "", regex=True)  # keep digits only
+            .replace("", pd.NA)
+        )
+    else:
+        df["phone_clean"] = pd.NA
+    
+    # Example cleaning for 'email'
+    if "email" in df.columns:
+        df["email_clean"] = (
+            df["email"]
+            .fillna("")
+            .str.lower()
+            .str.strip()
+            .replace("", pd.NA)
+        )
+    else:
+        df["email_clean"] = pd.NA
+    
+    # Example cleaning for 'address'
+    if "address" in df.columns:
+        df["address_clean"] = (
+            df["address"]
+            .fillna("")
+            .str.lower()
+            .str.strip()
+            # Expand common abbreviations
+            .str.replace(r"\bst\b", "street", regex=True)
+            .str.replace(r"\bave\b", "avenue", regex=True)
+            .replace(["nan", ""], pd.NA)
+        )
+    else:
+        df["address_clean"] = pd.NA
+    
+    return df
+
+###############################################################################
+# 2) (OPTIONAL) FUZZY MATCHING FOR ENTITY RESOLUTION
+###############################################################################
+def fuzzy_match_addresses(addresses, threshold=90):
+    """
+    Demonstrates fuzzy matching among a list of address strings.
+    Returns a dict that maps each address to its best match (if above threshold).
+    Requires 'rapidfuzz' library. This can be adapted for other fields.
+    """
+    if not FUZZY_AVAILABLE:
+        print("RapidFuzz not installed. Skipping fuzzy matching.")
+        return {}
+    
+    unique_addrs = list(set(a for a in addresses if pd.notna(a)))
+    matched_results = {}
+    
+    for addr in unique_addrs:
+        # This is O(n) per address, so can be expensive for large data sets.
+        best_match, score, _ = process.extractOne(addr, unique_addrs, scorer=fuzz.token_set_ratio)
+        if score >= threshold and best_match != addr:
+            matched_results[addr] = best_match
+    
+    return matched_results
+
+###############################################################################
+# 3) BUILD KNOWLEDGE GRAPH
+###############################################################################
+def build_knowledge_graph(
+    df, 
+    fraudster_col="fraudster", 
+    pot_fraudster_col="potential_fraudster", 
+    phone_col="phone_clean", 
+    email_col="email_clean", 
+    address_col="address_clean"
+):
+    """
+    Builds a NetworkX Graph from the DataFrame, representing:
+      - Fraudsters as nodes
+      - Phone/Email/Address as separate nodes
+      - Edges linking fraudsters to contact info or potential_fraudsters
+    """
+    G = nx.Graph()
+    
+    for _, row in df.iterrows():
+        main_fraudster = row.get(fraudster_col)
+        if pd.isna(main_fraudster):
+            continue
+        
+        # Add fraudster node
+        G.add_node(main_fraudster, node_type="fraudster")
+        
+        # Add phone node & edge
+        if phone_col in df.columns:
+            phone_val = row.get(phone_col)
+            if pd.notna(phone_val):
+                G.add_node(phone_val, node_type="phone")
+                G.add_edge(main_fraudster, phone_val, relationship="uses_phone")
+        
+        # Add email node & edge
+        if email_col in df.columns:
+            email_val = row.get(email_col)
+            if pd.notna(email_val):
+                G.add_node(email_val, node_type="email")
+                G.add_edge(main_fraudster, email_val, relationship="uses_email")
+        
+        # Add address node & edge
+        if address_col in df.columns:
+            address_val = row.get(address_col)
+            if pd.notna(address_val):
+                G.add_node(address_val, node_type="address")
+                G.add_edge(main_fraudster, address_val, relationship="uses_address")
+        
+        # Add potential_fraudster link
+        if pot_fraudster_col in df.columns:
+            pot_fraud = row.get(pot_fraudster_col)
+            if pd.notna(pot_fraud) and pot_fraud != main_fraudster:
+                G.add_node(pot_fraud, node_type="fraudster")
+                G.add_edge(main_fraudster, pot_fraud, relationship="potential_relationship")
+    
+    return G
+
+###############################################################################
+# 4) GRAPH ANALYTICS
+###############################################################################
+def analyze_graph(G):
+    """
+    Basic analysis: connected components, top-degree nodes, potential_fraudster edges.
+    """
+    print("\n=== Graph Analysis ===")
+    print(f"Total nodes: {G.number_of_nodes()}, Total edges: {G.number_of_edges()}")
+    
+    # 4.1 Connected components
+    connected_components = nx.connected_components(G)
+    sorted_components = sorted(connected_components, key=len, reverse=True)
+    
+    print("\nLargest Connected Components (up to 5 shown):")
+    for i, component in enumerate(sorted_components[:5], start=1):
+        print(f" Component {i}: size={len(component)}, sample_nodes={list(component)[:10]} ...")
+    
+    # 4.2 High-degree nodes
+    degree_dict = dict(G.degree())
+    sorted_by_degree = sorted(degree_dict.items(), key=lambda x: x[1], reverse=True)
+    
+    print("\nTop 10 Nodes by Degree:")
+    for node, deg in sorted_by_degree[:10]:
+        node_type = G.nodes[node].get("node_type", "unknown")
+        print(f" Node: {node} | Type: {node_type} | Degree: {deg}")
+    
+    # 4.3 Potential fraudster edges
+    potential_edges = [
+        (u, v) for u, v, d in G.edges(data=True) 
+        if d.get("relationship") == "potential_relationship"
+    ]
+    print(f"\nTotal 'potential_relationship' edges: {len(potential_edges)}")
+
+def calculate_risk_scores(G):
+    """
+    Assigns a basic risk score to each fraudster node 
+    based on degree + betweenness centrality.
+    Returns a pandas DataFrame with columns: [node, degree, betweenness, risk_score]
+    """
+    degree_dict = dict(G.degree())
+    betweenness_dict = nx.betweenness_centrality(G)
+    
+    rows = []
+    for node in G.nodes():
+        node_type = G.nodes[node].get("node_type")
+        if node_type == "fraudster":
+            deg = degree_dict[node]
+            bc = betweenness_dict[node]
+            # Example formula for risk scoring
+            risk_score = 10 * deg + 100 * bc
+            rows.append((node, deg, bc, risk_score))
+    
+    risk_df = pd.DataFrame(rows, columns=["node", "degree", "betweenness", "risk_score"])
+    risk_df.sort_values("risk_score", ascending=False, inplace=True)
+    return risk_df
+
+def extract_subgraph(G, start_node, radius=1):
+    """
+    Returns a subgraph containing all nodes within 'radius' steps of start_node.
+    Useful for investigating suspicious nodes in detail.
+    """
+    visited = set()
+    queue = [(start_node, 0)]
+    
+    while queue:
+        current, dist = queue.pop(0)
+        if current not in visited:
+            visited.add(current)
+            if dist < radius:
+                for neighbor in G.neighbors(current):
+                    queue.append((neighbor, dist+1))
+    
+    return G.subgraph(visited).copy()
+
+###############################################################################
+# 5) VISUALIZATION
+###############################################################################
+def visualize_graph_matplotlib(G, max_nodes=200):
+    """
+    Simple static visualization with matplotlib.
+    If the graph is large, you may want to limit nodes or sample a subgraph.
+    """
+    if G.number_of_nodes() > max_nodes:
+        print(f"Graph has {G.number_of_nodes()} nodes, too large for clear plotting.")
+        return
+    
+    print("\n=== Visualizing Graph with Matplotlib ===")
+    plt.figure(figsize=(10,8))
+    
+    pos = nx.spring_layout(G, k=0.5, seed=42)
+    
+    color_map = []
+    for node in G.nodes():
+        ntype = G.nodes[node].get("node_type", "unknown")
+        if ntype == "fraudster":
+            color_map.append("red")
+        elif ntype == "phone":
+            color_map.append("blue")
+        elif ntype == "email":
+            color_map.append("green")
+        elif ntype == "address":
+            color_map.append("orange")
+        else:
+            color_map.append("gray")
+    
+    nx.draw_networkx(G, pos=pos, node_color=color_map, with_labels=False, node_size=200)
+    plt.title("Fraud Knowledge Graph")
+    plt.axis("off")
+    plt.show()
+
+def export_gexf(G, filename="fraud_graph.gexf"):
+    """
+    Export the NetworkX graph to GEXF so it can be opened in Gephi.
+    """
+    nx.write_gexf(G, filename)
+    print(f"Graph exported to {filename} (Load in Gephi for interactive analysis).")
+
+def visualize_pyvis(G, output_html="fraud_network.html"):
+    """
+    Creates an interactive web-based visualization using PyVis.
+    """
+    if not PYVIS_AVAILABLE:
+        print("PyVis not installed. Skipping interactive web visualization.")
+        return
+    
+    net = Network(height="750px", width="100%", notebook=False)
+    net.force_atlas_2based()  # optional layout
+    
+    def _color_by_type(ntype):
+        if ntype == "fraudster":
+            return "red"
+        elif ntype == "phone":
+            return "blue"
+        elif ntype == "email":
+            return "green"
+        elif ntype == "address":
+            return "orange"
+        else:
+            return "gray"
+    
+    for node in G.nodes():
+        ntype = G.nodes[node].get("node_type", "unknown")
+        net.add_node(str(node), label=str(node), title=ntype, color=_color_by_type(ntype))
+
+    for u, v, data in G.edges(data=True):
+        rel = data.get("relationship", "")
+        net.add_edge(str(u), str(v), title=rel)
+    
+    net.show(output_html)
+    print(f"Interactive PyVis graph saved to {output_html}.")
+
+###############################################################################
+# 6) (OPTIONAL) UPLOAD TO NEO4J
+###############################################################################
+def upload_to_neo4j(
+    df, 
+    uri="bolt://localhost:7687", 
+    user="neo4j", 
+    password="neo",
+    fraudster_col="fraudster",
+    pot_fraudster_col="potential_fraudster",
+    phone_col="phone_clean"
+):
+    """
+    Demonstrates how to upload the DataFrame to Neo4j using py2neo.
+    Adjust the logic for your columns and relationships.
+    """
+    if not NEO4J_AVAILABLE:
+        print("py2neo not installed. Skipping Neo4j upload.")
+        return
+    
+    graph = Neo4jGraph(uri, auth=(user, password))
+    
+    # CAREFUL: If you want a clean slate, uncomment the next line:
+    # graph.run("MATCH (n) DETACH DELETE n")
+    
+    tx = graph.begin()
+    
+    for _, row in df.iterrows():
+        main_fraudster = row.get(fraudster_col)
+        if pd.isna(main_fraudster):
+            continue
+        
+        # Merge the Fraudster node
+        fraudster_node = Node("Fraudster", name=str(main_fraudster))
+        tx.merge(fraudster_node, "Fraudster", "name")
+        
+        # Example: add phone relationship
+        ph = row.get(phone_col)
+        if pd.notna(ph):
+            phone_node = Node("Phone", number=str(ph))
+            tx.merge(phone_node, "Phone", "number")
+            rel = Relationship(fraudster_node, "USES_PHONE", phone_node)
+            tx.merge(rel, "Fraudster", "name")
+        
+        # Link potential_fraudster
+        pot_fraud = row.get(pot_fraudster_col)
+        if pd.notna(pot_fraud) and pot_fraud != main_fraudster:
+            pf_node = Node("Fraudster", name=str(pot_fraud))
+            tx.merge(pf_node, "Fraudster", "name")
+            rel2 = Relationship(fraudster_node, "LINKED_TO", pf_node)
+            tx.merge(rel2, "Fraudster", "name")
+    
+    graph.commit(tx)
+    print("Data uploaded to Neo4j successfully.")
+
+###############################################################################
+# 7) EXPORT SUSPICIOUS NODES
+###############################################################################
+def export_suspicious_fraudsters(G, output_csv="suspicious_fraudsters.csv", degree_threshold=5):
+    """
+    Example: find all 'fraudster' nodes with degree > threshold and export to CSV.
+    """
+    suspicious_rows = []
+    for node in G.nodes():
+        if G.nodes[node].get("node_type") == "fraudster":
+            deg = G.degree(node)
+            if deg > degree_threshold:
+                suspicious_rows.append({"fraudster": node, "degree": deg})
+    
+    df_susp = pd.DataFrame(suspicious_rows)
+    df_susp.sort_values("degree", ascending=False, inplace=True)
+    df_susp.to_csv(output_csv, index=False)
+    print(f"Exported suspicious fraudsters (degree > {degree_threshold}) to {output_csv}")
+
+###############################################################################
+# MAIN PIPELINE
+###############################################################################
+def main():
+    # 1. Load & Clean Data
+    csv_path = "syntheticData-2024-12-08.csv"  # Change to your actual CSV
+    df = load_and_clean_data(csv_path)
+    
+    # 2. (Optional) Fuzzy Match Addresses
+    if FUZZY_AVAILABLE:
+        addresses = df["address_clean"].dropna().tolist()
+        matched_dict = fuzzy_match_addresses(addresses, threshold=90)
+        # Here you could replace original addresses with a canonical form.
+        # For example:
+        for old_addr, best_addr in matched_dict.items():
+            df.loc[df["address_clean"] == old_addr, "address_clean"] = best_addr
+    
+    # 3. Build Knowledge Graph in NetworkX
+    G = build_knowledge_graph(df,
+                              fraudster_col="fraudster",
+                              pot_fraudster_col="potential_fraudster",
+                              phone_col="phone_clean",
+                              email_col="email_clean",
+                              address_col="address_clean")
+    
+    # 4. Analyze Graph
+    analyze_graph(G)
+    
+    # 4a. Calculate risk scores & show top suspects
+    risk_df = calculate_risk_scores(G)
+    print("\nTop 10 Fraudsters by Risk Score:")
+    print(risk_df.head(10))
+    
+    # 5. Visualize
+    # 5a. Quick static plot (if graph is small)
+    visualize_graph_matplotlib(G, max_nodes=200)
+    
+    # 5b. Export GEXF for Gephi
+    export_gexf(G, filename="fraud_graph.gexf")
+    
+    # 5c. (Optional) Interactive Web Visualization with PyVis
+    visualize_pyvis(G, output_html="fraud_network.html")
+    
+    # 6. (Optional) Upload to Neo4j
+    upload_to_neo4j(df, uri="bolt://localhost:7687", user="neo4j", password="neo")
+    
+    # 7. Export suspicious fraudsters
+    export_suspicious_fraudsters(G, "suspicious_fraudsters.csv", degree_threshold=5)
+
+if __name__ == "__main__":
+    main()
