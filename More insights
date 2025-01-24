@@ -1,0 +1,152 @@
+import networkx as nx
+from collections import Counter, deque
+import matplotlib.pyplot as plt
+import numpy as np
+
+###############################################################################
+# 1. Fraudster Influence Zones
+###############################################################################
+def fraudster_influence(graph, fraudster_nodes, max_hops=3):
+    """
+    Calculate the number of unique nodes reachable by each fraudster
+    within max_hops.
+    """
+    influence = {}
+    for f in fraudster_nodes:
+        reachable_nodes = set()
+        queue = deque([(f, 0)])
+        visited = {f}
+        while queue:
+            current, depth = queue.popleft()
+            if depth < max_hops:
+                for neighbor in graph.neighbors(current):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, depth + 1))
+                        reachable_nodes.add(neighbor)
+        influence[f] = len(reachable_nodes)
+    return influence
+
+fraudsters = [n for n, d in G.nodes(data=True) if d.get("type") == "fraudster"]
+fraud_influence = fraudster_influence(G, fraudsters, max_hops=3)
+top_influential_fraudsters = sorted(fraud_influence.items(), key=lambda x: x[1], reverse=True)[:5]
+print("\nTop 5 influential fraudsters (reach within 3 hops):")
+for f, reach in top_influential_fraudsters:
+    print(f"Fraudster {f}: {reach} nodes")
+
+###############################################################################
+# 2. Shared Resource Analysis
+###############################################################################
+def shared_resource_nodes(graph, resource_types, min_shared=2):
+    """
+    Find resource nodes (phones, emails, etc.) connected to multiple fraudsters.
+    """
+    shared_nodes = {}
+    for node, attrs in graph.nodes(data=True):
+        if attrs.get("type") in resource_types:
+            fraudster_count = sum(
+                1 for neighbor in graph.neighbors(node) if graph.nodes[neighbor].get("type") == "fraudster"
+            )
+            if fraudster_count >= min_shared:
+                shared_nodes[node] = fraudster_count
+    return shared_nodes
+
+resource_types = ["phone", "email", "address"]
+shared_nodes = shared_resource_nodes(G, resource_types, min_shared=2)
+print(f"\nNumber of shared resources connected to >=2 fraudsters: {len(shared_nodes)}")
+print("Top shared resources (fraud connections):", sorted(shared_nodes.items(), key=lambda x: x[1], reverse=True)[:5])
+
+###############################################################################
+# 3. Fraud Ring Detection
+###############################################################################
+def detect_fraud_rings(graph, fraudster_nodes, min_size=3):
+    """
+    Identify cliques or densely connected subgraphs among fraudsters.
+    """
+    fraudster_subgraph = graph.subgraph(fraudster_nodes)
+    cliques = list(nx.find_cliques(fraudster_subgraph))
+    fraud_rings = [clique for clique in cliques if len(clique) >= min_size]
+    return fraud_rings
+
+fraud_rings = detect_fraud_rings(G, fraudsters, min_size=3)
+print(f"\nNumber of fraud rings (size >=3): {len(fraud_rings)}")
+for i, ring in enumerate(fraud_rings[:5], 1):
+    print(f"Fraud Ring {i}: {ring}")
+
+###############################################################################
+# 4. Unusual Connection Patterns
+###############################################################################
+def detect_unusual_members(graph, threshold=10):
+    """
+    Find member nodes connected to an unusually large number of resources.
+    """
+    unusual_members = {}
+    for node, attrs in graph.nodes(data=True):
+        if attrs.get("type") == "member":
+            resource_count = sum(
+                1 for neighbor in graph.neighbors(node) if graph.nodes[neighbor].get("type") in ["phone", "email", "address"]
+            )
+            if resource_count > threshold:
+                unusual_members[node] = resource_count
+    return unusual_members
+
+unusual_members = detect_unusual_members(G, threshold=10)
+print(f"\nNumber of unusual members connected to >10 resources: {len(unusual_members)}")
+print("Top unusual members (resource connections):", sorted(unusual_members.items(), key=lambda x: x[1], reverse=True)[:5])
+
+###############################################################################
+# 5. Temporal Analysis (if timestamps are available)
+###############################################################################
+if "timestamp" in nx.get_edge_attributes(G, "timestamp"):
+    print("\nTemporal Edge Analysis:")
+    edge_timestamps = nx.get_edge_attributes(G, "timestamp")
+    fraud_timestamps = [
+        timestamp for edge, timestamp in edge_timestamps.items()
+        if G.nodes[edge[0]].get("type") == "fraudster" or G.nodes[edge[1]].get("type") == "fraudster"
+    ]
+    
+    # Aggregate fraud activity by time
+    time_counts = Counter(fraud_timestamps)
+    sorted_time_counts = dict(sorted(time_counts.items()))
+    
+    # Plot fraud activity over time
+    plt.figure(figsize=(10, 6))
+    plt.plot(list(sorted_time_counts.keys()), list(sorted_time_counts.values()), marker="o")
+    plt.title("Fraud Activity Over Time")
+    plt.xlabel("Timestamp")
+    plt.ylabel("Fraudulent Activity")
+    plt.grid()
+    plt.show()
+
+###############################################################################
+# 6. Fraud Risk Scoring
+###############################################################################
+def compute_risk_scores(graph):
+    """
+    Compute a risk score for each node based on its proximity to fraudsters.
+    """
+    risk_scores = {}
+    for node, attrs in graph.nodes(data=True):
+        # Base risk = degree
+        risk = graph.degree(node)
+        
+        # Add weight for fraudster neighbors
+        fraudster_neighbors = sum(
+            1 for neighbor in graph.neighbors(node) if graph.nodes[neighbor].get("type") == "fraudster"
+        )
+        risk += 2 * fraudster_neighbors  # Weight fraud connections more
+        
+        # Add weight for being close to fraudsters (multi-hop)
+        for neighbor in graph.neighbors(node):
+            if any(graph.nodes[second_neigh].get("type") == "fraudster" for second_neigh in graph.neighbors(neighbor)):
+                risk += 1
+        
+        risk_scores[node] = risk
+    return risk_scores
+
+risk_scores = compute_risk_scores(G)
+top_risky_nodes = sorted(risk_scores.items(), key=lambda x: x[1], reverse=True)[:10]
+print("\nTop 10 risky nodes by risk score:")
+for node, score in top_risky_nodes:
+    print(f"Node {node}: Risk Score = {score}")
+
