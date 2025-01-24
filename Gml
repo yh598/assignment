@@ -1,0 +1,55 @@
+import networkx as nx
+
+def fix_gml_brackets(input_path, output_path):
+    """
+    Reads a GML file line by line, counts '[' and ']' to see if there's a mismatch.
+    If more '[' than ']', appends the difference as closing brackets at the end.
+    Writes out a new GML file at output_path.
+    Returns the difference in bracket count (how many were added).
+    """
+    bracket_count = 0
+    lines = []
+    
+    # 1) Read all lines & count brackets
+    with open(input_path, "r", encoding="utf-8") as f:
+        for line in f:
+            lines.append(line)
+            bracket_count += line.count('[')
+            bracket_count -= line.count(']')
+    
+    # 2) If bracket_count > 0, we are missing some closing brackets
+    if bracket_count > 0:
+        # Add them at the end
+        # For clarity, put them each on a new line
+        lines.append("\n")
+        for _ in range(bracket_count):
+            lines.append("]\n")
+        print(f"Appended {bracket_count} closing bracket(s).")
+    elif bracket_count < 0:
+        print(f"Warning: There are {abs(bracket_count)} more ']' than '['. "
+              "This script does not remove extra brackets. The file may still be invalid.")
+    
+    # 3) Write out the "fixed" file
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    
+    return bracket_count
+
+def load_fixed_gml(input_path, fixed_path="fixed_output.gml"):
+    """
+    Attempts to fix and then load a GML file using NetworkX.
+    If successful, returns the Graph object. Otherwise raises an error.
+    """
+    diff = fix_gml_brackets(input_path, fixed_path)
+    
+    # 4) Try reading with NetworkX
+    try:
+        G = nx.read_gml(fixed_path)
+        print(f"Successfully loaded fixed GML. Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+        return G
+    except Exception as e:
+        print(f"Failed to load fixed GML: {e}")
+        raise
+
+# Example usage:
+# G = load_fixed_gml("audience.gml", "audience_fixed.gml")
