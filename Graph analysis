@@ -1,0 +1,120 @@
+import networkx as nx
+
+###############################################################################
+# ASSUMPTION: You have an existing NetworkX graph called G.
+# Each node has attributes:
+#   G.nodes[node]["node_type"]    -> e.g. "member", "phone", "address", ...
+#   G.nodes[node]["is_fraudster"] -> True/False
+###############################################################################
+
+# Example utility to count how many fraudster neighbors a node has
+def count_fraudster_neighbors(graph, node):
+    """
+    Returns how many direct neighbors of `node` are labeled as fraudsters.
+    """
+    neighbors = graph[node]
+    return sum(graph.nodes[n]["is_fraudster"] for n in neighbors)
+
+###############################################################################
+# 1. Identify Suspicious Contact Nodes (phones, emails, addresses, etc.)
+#    shared by multiple fraudsters
+###############################################################################
+
+suspicious_phones = []
+suspicious_emails = []
+suspicious_addresses = []
+# ... add more categories if you like, e.g. suspicious visitor_ids
+
+for node, attrs in G.nodes(data=True):
+    nt = attrs["node_type"]
+    # We focus on contact-like node types
+    if nt in ["phone", "email", "address"]:
+        fraud_count = count_fraudster_neighbors(G, node)
+        if fraud_count > 1:
+            if nt == "phone":
+                suspicious_phones.append(node)
+            elif nt == "email":
+                suspicious_emails.append(node)
+            elif nt == "address":
+                suspicious_addresses.append(node)
+
+print("Suspicious phones (>1 fraudster):", suspicious_phones)
+print("Suspicious emails (>1 fraudster):", suspicious_emails)
+print("Suspicious addresses (>1 fraudster):", suspicious_addresses)
+
+###############################################################################
+# 2. Flag Members Connected Directly or 2-Hops Away from Fraudsters
+###############################################################################
+
+members_directly_connected = []
+members_2hops_connected = []
+
+for node, attrs in G.nodes(data=True):
+    if attrs["node_type"] == "member":
+        # 2.1. Direct connection?
+        neighbors = list(G[node])
+        if any(G.nodes[n]["is_fraudster"] for n in neighbors):
+            members_directly_connected.append(node)
+        else:
+            # 2.2. Check 2-hop connection
+            # If any neighbor of a neighbor is a fraudster, then it's 2-hops away
+            found_2hop_fraudster = False
+            for neigh in neighbors:
+                for neigh_of_neigh in G[neigh]:
+                    if G.nodes[neigh_of_neigh]["is_fraudster"]:
+                        found_2hop_fraudster = True
+                        break
+                if found_2hop_fraudster:
+                    break
+            
+            if found_2hop_fraudster:
+                members_2hops_connected.append(node)
+
+print("Members directly connected to fraudsters:", members_directly_connected[:10], "...")
+print("Members within 2-hops of fraudsters:", members_2hops_connected[:10], "...")
+
+###############################################################################
+# 3. (Optional) Compute a Simple Suspiciousness Score
+###############################################################################
+
+# Example formula:
+#  suspicious_score = (# of fraudster neighbors) 
+#                     + 0.5 * (# of suspicious phone/email neighbors)
+# Adjust weighting & logic to your needs.
+
+suspicious_score = {}
+
+# Put all suspicious contact nodes in one set for easier checking
+suspicious_contacts = set(suspicious_phones + suspicious_emails + suspicious_addresses)
+
+for node in G.nodes():
+    fraud_neighbor_count = count_fraudster_neighbors(G, node)
+    
+    # Count how many neighbors are in the "suspicious_contacts" set
+    suspicious_contact_count = 0
+    for neigh in G[node]:
+        if neigh in suspicious_contacts:
+            suspicious_contact_count += 1
+    
+    # Simple scoring
+    score = fraud_neighbor_count + 0.5 * suspicious_contact_count
+    suspicious_score[node] = score
+
+# Store this in the graph as a node attribute
+nx.set_node_attributes(G, suspicious_score, "suspicious_score")
+
+###############################################################################
+# 4. Extract a Subgraph of "Suspicious" Nodes
+###############################################################################
+
+# Suppose we define "suspicious" as score >= 2.0 (example threshold)
+threshold = 2.0
+nodes_of_interest = [n for n, sc in suspicious_score.items() if sc >= threshold]
+
+G_suspicious = G.subgraph(nodes_of_interest).copy()
+print(f"Suspicious subgraph has {G_suspicious.number_of_nodes()} nodes,"
+      f" {G_suspicious.number_of_edges()} edges (score >= {threshold})")
+
+# Optionally, export to Gephi or GraphML
+nx.write_gexf(G_suspicious, "suspicious_subgraph.gexf")
+print("Exported suspicious_subgraph.gexf for further analysis/visualization.")
