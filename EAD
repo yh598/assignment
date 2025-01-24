@@ -1,0 +1,286 @@
+import networkx as nx
+import matplotlib.pyplot as plt
+from collections import Counter
+import pandas as pd
+import numpy as np
+
+###############################################################################
+# 1. Basic Graph Statistics
+###############################################################################
+print(f"Number of nodes: {G.number_of_nodes()}")
+print(f"Number of edges: {G.number_of_edges()}")
+
+# Degree
+average_degree = sum(dict(G.degree()).values()) / G.number_of_nodes()
+print(f"Average degree: {average_degree:.2f}")
+
+# Density
+density = nx.density(G)
+print(f"Graph density: {density:.6f}")
+
+# Check if the graph is directed
+is_directed = nx.is_directed(G)
+print(f"Is the graph directed? {is_directed}")
+
+# Connected components
+if not is_directed:
+    connected_components = list(nx.connected_components(G))
+    print(f"Number of connected components: {len(connected_components)}")
+    largest_cc = max(connected_components, key=len)
+    print(f"Largest connected component size: {len(largest_cc)}")
+
+###############################################################################
+# 2. Node Attribute Analysis
+###############################################################################
+# Check distribution of "type" attribute
+node_types = [data.get("type") for _, data in G.nodes(data=True)]
+type_counts = Counter(node_types)
+print("\nNode type distribution:")
+for ntype, count in type_counts.items():
+    print(f"  {ntype}: {count}")
+
+# Check node degree distribution
+degree_sequence = [deg for _, deg in G.degree()]
+print(f"Max degree: {max(degree_sequence)}")
+print(f"Min degree: {min(degree_sequence)}")
+
+# Plot degree distribution
+plt.figure(figsize=(8, 6))
+plt.hist(degree_sequence, bins=30, log=True, color='blue', edgecolor='black')
+plt.title("Degree Distribution (Log Scale)")
+plt.xlabel("Degree")
+plt.ylabel("Frequency")
+plt.show()
+
+###############################################################################
+# 3. Edge Analysis
+###############################################################################
+# Check edge attributes
+edge_attributes = [attr for _, _, attr in G.edges(data=True)]
+print(f"Sample edge attributes: {edge_attributes[:5]}")
+
+# Weighted edges (if weight attribute exists)
+if "weight" in edge_attributes[0]:
+    weights = [data["weight"] for _, _, data in G.edges(data=True)]
+    print(f"Edge weight summary: Min={min(weights)}, Max={max(weights)}, Avg={np.mean(weights):.2f}")
+    plt.figure(figsize=(8, 6))
+    plt.hist(weights, bins=30, log=True, color='green', edgecolor='black')
+    plt.title("Edge Weight Distribution (Log Scale)")
+    plt.xlabel("Weight")
+    plt.ylabel("Frequency")
+    plt.show()
+
+###############################################################################
+# 4. Centrality Analysis
+###############################################################################
+# Degree Centrality
+degree_centrality = nx.degree_centrality(G)
+top_degree_nodes = sorted(degree_centrality.items(), key=lambda x: x[1], reverse=True)[:10]
+print("\nTop 10 nodes by degree centrality:")
+for node, centrality in top_degree_nodes:
+    print(f"  Node {node}: {centrality:.4f}")
+
+# Betweenness Centrality (sample if graph is large)
+if G.number_of_nodes() <= 1000:  # Only run for smaller graphs
+    betweenness_centrality = nx.betweenness_centrality(G)
+    top_betweenness_nodes = sorted(betweenness_centrality.items(), key=lambda x: x[1], reverse=True)[:10]
+    print("\nTop 10 nodes by betweenness centrality:")
+    for node, centrality in top_betweenness_nodes:
+        print(f"  Node {node}: {centrality:.4f}")
+
+###############################################################################
+# 5. Connectivity Analysis
+###############################################################################
+# Shortest path lengths (only for smaller graphs or subgraphs)
+if G.number_of_nodes() <= 1000:
+    lengths = dict(nx.shortest_path_length(G))
+    avg_path_length = np.mean([length for target_lengths in lengths.values() for length in target_lengths.values()])
+    print(f"Average shortest path length: {avg_path_length:.2f}")
+
+# Diameter (only if connected and graph is small)
+if not is_directed and len(connected_components) == 1 and len(largest_cc) < 1000:
+    diameter = nx.diameter(G.subgraph(largest_cc))
+    print(f"Graph diameter: {diameter}")
+
+###############################################################################
+# 6. Suspicious Node Analysis
+###############################################################################
+# Identify nodes with high fraud connections
+fraudsters = [node for node, data in G.nodes(data=True) if data.get("type") == "fraudster"]
+fraud_neighbors = Counter()
+for f in fraudsters:
+    for neighbor in G.neighbors(f):
+        fraud_neighbors[neighbor] += 1
+
+# Nodes connected to >1 fraudster
+suspicious_nodes = {node: count for node, count in fraud_neighbors.items() if count > 1}
+print(f"\nNumber of suspicious nodes connected to >1 fraudster: {len(suspicious_nodes)}")
+
+###############################################################################
+# 7. Subgraph Visualization (Optional)
+###############################################################################
+# Create subgraph of suspicious nodes
+suspicious_subgraph = G.subgraph(list(suspicious_nodes.keys()) + fraudsters)
+print(f"Suspicious subgraph has {suspicious_subgraph.number_of_nodes()} nodes and {suspicious_subgraph.number_of_edges()} edges.")
+
+# Draw (for small graphs only)
+if suspicious_subgraph.number_of_nodes() <= 100:
+    plt.figure(figsize=(10, 8))
+    pos = nx.spring_layout(suspicious_subgraph)
+    node_colors = ["red" if G.nodes[n]["type"] == "fraudster" else "blue" for n in suspicious_subgraph]
+    nx.draw(suspicious_subgraph, pos, node_color=node_colors, with_labels=True, node_size=500, font_size=10)
+    plt.title("Suspicious Subgraph Visualization")
+    plt.show()
+
+import networkx as nx
+import matplotlib.pyplot as plt
+from collections import Counter
+import pandas as pd
+import numpy as np
+
+###############################################################################
+# 1. Node and Attribute Deep Dive
+###############################################################################
+# 1.1 Attribute Analysis - Relationship Between Attributes
+print("\nNode Attribute Correlations:")
+node_data = pd.DataFrame.from_dict(dict(G.nodes(data=True)), orient="index")
+print(node_data.head())  # Inspect attributes for patterns
+
+# Count co-occurrences of "type" and other attributes
+if "type" in node_data.columns:
+    type_counts = node_data["type"].value_counts()
+    print("\nNode 'type' distribution:")
+    print(type_counts)
+
+    # Example: Count fraudsters grouped by another attribute (e.g., community_id)
+    if "community_id" in node_data.columns:
+        fraudsters_by_community = node_data[node_data["type"] == "fraudster"]["community_id"].value_counts()
+        print("\nFraudsters grouped by community:")
+        print(fraudsters_by_community)
+
+# 1.2 Fraudster Connectivity Patterns
+fraudsters = [n for n, d in G.nodes(data=True) if d.get("type") == "fraudster"]
+fraudster_degrees = [G.degree(n) for n in fraudsters]
+print(f"\nFraudster Degree Stats: Min={min(fraudster_degrees)}, Max={max(fraudster_degrees)}, Mean={np.mean(fraudster_degrees):.2f}")
+
+plt.figure(figsize=(8, 6))
+plt.hist(fraudster_degrees, bins=30, color='red', edgecolor='black', log=True)
+plt.title("Fraudster Degree Distribution (Log Scale)")
+plt.xlabel("Degree")
+plt.ylabel("Frequency")
+plt.show()
+
+###############################################################################
+# 2. Fraud Network and Community-Level Analysis
+###############################################################################
+# 2.1 Community Detection
+print("Running Louvain Community Detection...")
+import community as community_louvain
+partition = community_louvain.best_partition(G)
+nx.set_node_attributes(G, partition, "community_id")
+
+# Analyze community sizes
+community_sizes = Counter(partition.values())
+print("\nCommunity sizes (top 10):")
+print(community_sizes.most_common(10))
+
+# Focus on communities with high fraud concentration
+community_fraud_counts = {}
+for community_id, size in community_sizes.items():
+    nodes_in_community = [n for n, data in G.nodes(data=True) if data.get("community_id") == community_id]
+    fraud_count = sum(1 for n in nodes_in_community if G.nodes[n].get("type") == "fraudster")
+    community_fraud_counts[community_id] = fraud_count
+
+top_fraud_communities = sorted(community_fraud_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+print("\nTop 5 communities by fraud count:")
+for community_id, count in top_fraud_communities:
+    print(f"Community {community_id}: {count} fraudsters")
+
+###############################################################################
+# 3. Multi-hop and Path Analysis
+###############################################################################
+# 3.1 Multi-hop Fraud Spread
+def find_multi_hop_paths(graph, source_nodes, target_type, max_hops=3):
+    """
+    Find all nodes of type `target_type` reachable from `source_nodes`
+    within `max_hops`.
+    """
+    results = set()
+    for source in source_nodes:
+        queue = [(source, 0)]
+        visited = {source}
+        while queue:
+            current, depth = queue.pop(0)
+            if depth < max_hops:
+                for neighbor in graph.neighbors(current):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, depth + 1))
+                        if graph.nodes[neighbor].get("type") == target_type:
+                            results.add(neighbor)
+    return results
+
+# Find members within 3 hops of any fraudster
+multi_hop_members = find_multi_hop_paths(G, fraudsters, target_type="member", max_hops=3)
+print(f"\nNumber of members within 3 hops of fraudsters: {len(multi_hop_members)}")
+
+###############################################################################
+# 4. Motif Analysis (Triangles, Stars, Chains)
+###############################################################################
+# 4.1 Triangle Count
+triangles = nx.triangles(G)
+triangle_counts = Counter(triangles.values())
+print("\nTriangle Count Distribution (Top 10):")
+print(triangle_counts.most_common(10))
+
+# Find nodes participating in many triangles (potential fraud rings)
+nodes_with_high_triangles = [n for n, count in triangles.items() if count > 5]
+print(f"Nodes participating in >5 triangles: {len(nodes_with_high_triangles)}")
+
+# 4.2 Star Motifs (High-Degree Nodes)
+high_degree_nodes = [n for n, d in G.degree() if d > 50]
+print(f"Number of high-degree nodes (degree > 50): {len(high_degree_nodes)}")
+
+###############################################################################
+# 5. Temporal Analysis (if timestamps are available)
+###############################################################################
+if "timestamp" in nx.get_edge_attributes(G, "timestamp"):
+    print("\nTemporal Edge Analysis:")
+    timestamps = nx.get_edge_attributes(G, "timestamp").values()
+    min_time, max_time = min(timestamps), max(timestamps)
+    print(f"Timestamp range: {min_time} to {max_time}")
+
+    # Aggregate edge counts over time
+    time_counts = Counter(timestamps)
+    time_series = pd.Series(time_counts).sort_index()
+    
+    # Plot edge activity over time
+    plt.figure(figsize=(10, 6))
+    time_series.plot(kind="line", title="Edge Activity Over Time")
+    plt.xlabel("Timestamp")
+    plt.ylabel("Edge Count")
+    plt.show()
+
+###############################################################################
+# 6. Node Embeddings for Clustering (Optional)
+###############################################################################
+print("\nGenerating Node2Vec Embeddings...")
+from node2vec import Node2Vec
+
+node2vec = Node2Vec(G, dimensions=64, walk_length=30, num_walks=200, workers=4)
+model = node2vec.fit(window=10, min_count=1, batch_words=4)
+
+# Example: Retrieve embeddings for fraudsters
+fraud_embeddings = np.array([model.wv[str(node)] for node in fraudsters if str(node) in model.wv])
+print(f"Fraudster embeddings shape: {fraud_embeddings.shape}")
+
+###############################################################################
+# 7. Subgraph Extraction for Visualization
+###############################################################################
+# Extract subgraph with suspicious nodes
+suspicious_nodes = set(fraudsters + list(multi_hop_members) + nodes_with_high_triangles)
+subgraph = G.subgraph(suspicious_nodes)
+
+print(f"\nSuspicious subgraph has {subgraph.number_of_nodes()} nodes and {subgraph.number_of_edges()} edges.")
+nx.write_gexf(subgraph, "deep_dive_subgraph.gexf")
+print("Subgraph exported to 'deep_dive_subgraph.gexf'.")
