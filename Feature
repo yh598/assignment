@@ -1,0 +1,115 @@
+import networkx as nx
+import pandas as pd
+import numpy as np
+
+###############################################################################
+# ASSUMPTIONS:
+#   1. You have a NetworkX graph named G.
+#   2. Each node has:
+#      - G.nodes[node]["node_type"]    -> e.g. "member", "phone", "fraudster", ...
+#      - G.nodes[node]["is_fraudster"] -> bool
+#   3. For demonstration, we'll build features mostly for "member" nodes.
+###############################################################################
+
+def get_graph_features(G, node, max_hops=2):
+    """
+    Extract various graph-based features for a single node.
+    Return them as a dictionary that can be turned into a row in a DataFrame.
+    """
+    data = {}
+    node_attrs = G.nodes[node]
+    node_type = node_attrs.get("node_type", "unknown")
+    
+    # Basic attributes
+    data["node_id"] = node
+    data["node_type"] = node_type
+    data["is_fraudster"] = node_attrs.get("is_fraudster", False)
+    
+    # 1) Degree (total neighbors)
+    deg = G.degree(node)
+    data["degree"] = deg
+    
+    # 2) Degree by neighbor type (phone, email, address, etc.)
+    phone_count = 0
+    email_count = 0
+    address_count = 0
+    fraudster_count = 0
+    for neigh in G[node]:
+        neigh_type = G.nodes[neigh]["node_type"]
+        if neigh_type == "phone":
+            phone_count += 1
+        elif neigh_type == "email":
+            email_count += 1
+        elif neigh_type == "address":
+            address_count += 1
+        if G.nodes[neigh]["is_fraudster"]:
+            fraudster_count += 1
+    
+    data["phone_neighbors"] = phone_count
+    data["email_neighbors"] = email_count
+    data["address_neighbors"] = address_count
+    data["fraudster_neighbors"] = fraudster_count
+    
+    # 3) Fraction of neighbors that are fraudsters
+    data["frac_fraudster_neighbors"] = (
+        fraudster_count / deg if deg > 0 else 0.0
+    )
+    
+    # 4) Shortest path or BFS-based features (e.g., how many fraudsters within 2 hops?)
+    #    We'll do a BFS up to `max_hops` and count how many fraudsters are within that range.
+    #    (For large graphs, consider a more efficient approach or caching results.)
+    from collections import deque
+    
+    visited = set([node])
+    queue = deque([(node, 0)])
+    fraudsters_within_2 = 0
+    
+    while queue:
+        current, dist = queue.popleft()
+        if dist < max_hops:
+            for neighbor in G[current]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    # if neighbor is a fraudster, increment
+                    if G.nodes[neighbor]["is_fraudster"]:
+                        fraudsters_within_2 += 1
+                    queue.append((neighbor, dist + 1))
+    
+    data[f"fraudsters_within_{max_hops}_hops"] = fraudsters_within_2
+    
+    # 5) Local clustering coefficient (can be informative for link patterns)
+    #    Note: For "member" nodes, you may or may not interpret it meaningfully, but let's include it.
+    data["clustering_coeff"] = nx.clustering(G, node)
+    
+    # 6) PageRank or other global measure
+    #    Typically, you'd compute PageRank for all nodes once, then store it. For demonstration:
+    #    (Better to do it outside this function for performance reasons.)
+    
+    return data
+
+
+# ------------------------------------------------------------------------------
+# 2A. (Optional) Precompute PageRank or other global measures for the entire graph
+# ------------------------------------------------------------------------------
+# Doing it once is far more efficient than computing for each node individually.
+pagerank_scores = nx.pagerank(G, alpha=0.85, max_iter=100)
+# You might store them in the graph or keep them in a dict
+nx.set_node_attributes(G, pagerank_scores, "pagerank")
+
+
+# ------------------------------------------------------------------------------
+# 2B. Build the Feature Table for Member Nodes
+# ------------------------------------------------------------------------------
+all_features = []
+
+for node in G.nodes:
+    # We only want to build features for "member" nodes (or any node of interest)
+    if G.nodes[node].get("node_type") == "member":
+        feats = get_graph_features(G, node, max_hops=2)
+        # Add the precomputed pagerank
+        feats["pagerank"] = G.nodes[node]["pagerank"]
+        all_features.append(feats)
+
+df_features = pd.DataFrame(all_features)
+
+print("Feature DataFrame sample:\n", df_features.head())
