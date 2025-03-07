@@ -174,3 +174,36 @@ with pd.ExcelWriter(excel_filename_all, engine="xlsxwriter") as writer:
 
 # Provide the download link
 excel_filename_all
+
+
+# Save all results tables into a single sheet in an Excel file
+excel_filename_single_sheet = "/mnt/data/risk_analysis_single_tab.xlsx"
+
+# Create a combined DataFrame to store all results
+combined_df = []
+
+# Append raw risk scenario results
+for dataset_name, scenario_results in risk_scenario_approval_results.items():
+    for scenario, df_result in scenario_results.items():
+        df_result = df_result.copy()
+        df_result.insert(0, "Dataset", dataset_name)
+        df_result.insert(1, "Scenario", scenario)
+        combined_df.append(df_result)
+
+# Append aggregated risk summaries
+for dataset_name, scenario_results in aggregated_results_corrected.items():
+    for scenario, df_result in scenario_results.items():
+        df_result = df_result.copy()
+        df_result.insert(0, "Dataset", dataset_name)
+        df_result.insert(1, "Scenario", scenario)
+        combined_df.append(df_result)
+
+# Concatenate all results into a single DataFrame
+final_combined_df = pd.concat(combined_df, ignore_index=True)
+
+# Save to Excel
+with pd.ExcelWriter(excel_filename_single_sheet, engine="xlsxwriter") as writer:
+    final_combined_df.to_excel(writer, sheet_name="Risk Analysis", index=False)
+
+# Provide the download link
+excel_filename_single_sheet
