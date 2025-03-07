@@ -141,3 +141,16 @@ def generate_summ_df_with_thresholds(df):
 #     for scenario, df_result in scenario_results.items():
 #         print(f"\nDataset: {dataset_name} - {scenario}")
 #         print(df_result.to_string(index=False))
+
+# Save formatted results to an Excel file for easy copying and sharing
+excel_filename = "/mnt/data/risk_summary.xlsx"
+
+# Create a writer object
+with pd.ExcelWriter(excel_filename, engine="xlsxwriter") as writer:
+    for dataset_name, scenario_results in aggregated_results_corrected.items():
+        for scenario, df_result in scenario_results.items():
+            sheet_name = f"{dataset_name}_{scenario}"[:31]  # Excel sheet names are limited to 31 chars
+            df_result.to_excel(writer, sheet_name=sheet_name, index=False)
+
+# Provide the download link
+excel_filename
