@@ -154,3 +154,23 @@ with pd.ExcelWriter(excel_filename, engine="xlsxwriter") as writer:
 
 # Provide the download link
 excel_filename
+
+# Save all results tables (including raw results, aggregated summaries, and approvals) to an Excel file
+excel_filename_all = "/mnt/data/full_risk_analysis.xlsx"
+
+# Create a writer object
+with pd.ExcelWriter(excel_filename_all, engine="xlsxwriter") as writer:
+    # Save raw risk scenario results
+    for dataset_name, scenario_results in risk_scenario_approval_results.items():
+        for scenario, df_result in scenario_results.items():
+            sheet_name = f"{dataset_name}_{scenario}"[:31]  # Ensure sheet name length limit
+            df_result.to_excel(writer, sheet_name=sheet_name, index=False)
+    
+    # Save aggregated risk summaries
+    for dataset_name, scenario_results in aggregated_results_corrected.items():
+        for scenario, df_result in scenario_results.items():
+            sheet_name = f"Agg_{dataset_name}_{scenario}"[:31]  # Prefix for aggregation
+            df_result.to_excel(writer, sheet_name=sheet_name, index=False)
+
+# Provide the download link
+excel_filename_all
