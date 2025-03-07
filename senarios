@@ -70,3 +70,74 @@ for dataset_name, scenario_results in risk_scenario_formatted_results.items():
     for scenario, df_result in scenario_results.items():
         print(f"\nDataset: {dataset_name} - {scenario}")
         print(df_result.to_string(index=False))
+
+
+import pandas as pd
+import numpy as np
+
+def generate_summ_df_with_thresholds(df):
+    """
+    Generate summary statistics and categorize data into High, Medium, and Low Risk tiers
+    based on three different scenarios. Each scenario specifies:
+    
+    - High Risk: Top X% of score distribution with reason code.
+    - Low Risk: Bottom Y% of score distribution without reason code.
+    - Medium Risk: Remaining population.
+    
+    This function also calculates the score thresholds for each risk tier.
+    """
+    results = {}
+
+    scenarios = [
+        (0.10, 0.50, "Scenario 1"),
+        (0.15, 0.45, "Scenario 2"),
+        (0.20, 0.40, "Scenario 3")
+    ]
+
+    for high_risk_pct, low_risk_pct, scenario_name in scenarios:
+        df_copy = df.copy()
+
+        # Remove NaN values in fraud score column
+        df_copy = df_copy.dropna(subset=['SIGMAFIRSTPARTYFRAUDSCORE'])
+
+        # Identify whether a reason code is present (assuming reason codes start with R102, R103, etc.)
+        reason_code_columns = [col for col in df_copy.columns if col.startswith(('R102', 'R103', 'R104'))]
+        df_copy['Has_Reason_Code'] = df_copy[reason_code_columns].astype(bool).any(axis=1).astype(int)
+
+        # Compute percentile thresholds
+        high_risk_threshold = np.percentile(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'], 100 - (high_risk_pct * 100))
+        low_risk_threshold = np.percentile(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'], low_risk_pct * 100)
+
+        # Categorize risk tiers
+        df_copy['Risk_Tier'] = 'Medium Risk'  # Default
+        df_copy.loc[(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'] >= high_risk_threshold) & (df_copy['Has_Reason_Code'] == 1), 'Risk_Tier'] = 'High Risk'
+        df_copy.loc[(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'] <= low_risk_threshold) & (df_copy['Has_Reason_Code'] == 0), 'Risk_Tier'] = 'Low Risk'
+
+        # Aggregate statistics
+        risk_summary = df_copy.groupby('Risk_Tier').agg(
+            count=('SIGMAFIRSTPARTYFRAUDSCORE', 'count'),
+            avg_score=('SIGMAFIRSTPARTYFRAUDSCORE', 'mean'),
+            min_score=('SIGMAFIRSTPARTYFRAUDSCORE', 'min'),
+            max_score=('SIGMAFIRSTPARTYFRAUDSCORE', 'max')
+        ).reset_index()
+
+        # Add threshold information
+        risk_summary['threshold'] = risk_summary.apply(
+            lambda row: f"{row['min_score']:.2f} - {row['max_score']:.2f}", axis=1
+        )
+
+        results[scenario_name] = risk_summary
+
+    return results
+
+# Example usage:
+# Assuming df_dict is a dictionary containing your DataFrames
+# risk_scenario_results = {}
+# for name, df in df_dict.items():
+#     risk_scenario_results[name] = generate_summ_df_with_thresholds(df)
+
+# Display results for all datasets
+# for dataset_name, scenario_results in risk_scenario_results.items():
+#     for scenario, df_result in scenario_results.items():
+#         print(f"\nDataset: {dataset_name} - {scenario}")
+#         print(df_result.to_string(index=False))
