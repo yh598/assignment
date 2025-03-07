@@ -1,0 +1,66 @@
+def generate_summ_df_with_scenarios_formatted(df):
+    """
+    Generate summary statistics and categorize data into High, Medium, and Low Risk tiers
+    based on three different scenarios, formatted as cumulative approval tables.
+    
+    Scenario 1:
+        - High Risk: Top 10% of score distribution with reason code.
+        - Low Risk: Bottom 50% of score distribution without reason code.
+    
+    Scenario 2:
+        - High Risk: Top 15% of score distribution with reason code.
+        - Low Risk: Bottom 45% of score distribution without reason code.
+    
+    Scenario 3:
+        - High Risk: Top 20% of score distribution with reason code.
+        - Low Risk: Bottom 40% of score distribution without reason code.
+    
+    - Medium Risk: Remaining population in all scenarios.
+    """
+    results = {}
+
+    scenarios = [
+        (0.10, 0.50, "Scenario 1"),
+        (0.15, 0.45, "Scenario 2"),
+        (0.20, 0.40, "Scenario 3")
+    ]
+
+    for high_risk_pct, low_risk_pct, scenario_name in scenarios:
+        df_copy = df.copy()
+
+        # Remove NaN values in fraud score column
+        df_copy = df_copy.dropna(subset=['SIGMAFIRSTPARTYFRAUDSCORE'])
+
+        # Identify whether a reason code is present (assuming reason codes start with R102, R103, etc.)
+        reason_code_columns = [col for col in df_copy.columns if col.startswith(('R102', 'R103', 'R104'))]
+        df_copy['Has_Reason_Code'] = df_copy[reason_code_columns].astype(bool).any(axis=1).astype(int)
+
+        # Compute percentile thresholds
+        high_risk_threshold = np.percentile(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'], 100 - (high_risk_pct * 100))
+        low_risk_threshold = np.percentile(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'], low_risk_pct * 100)
+
+        # Categorize risk tiers
+        df_copy['Risk_Tier'] = 'Medium Risk'  # Default
+        df_copy.loc[(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'] >= high_risk_threshold) & (df_copy['Has_Reason_Code'] == 1), 'Risk_Tier'] = 'High Risk'
+        df_copy.loc[(df_copy['SIGMAFIRSTPARTYFRAUDSCORE'] <= low_risk_threshold) & (df_copy['Has_Reason_Code'] == 0), 'Risk_Tier'] = 'Low Risk'
+
+        # Aggregate statistics formatted similarly to the given output
+        summ = df_copy.groupby(['Risk_Tier', 'SIGMAFIRSTPARTYFRAUDSCORE']).size().reset_index(name='total_review')
+        summ['cum_tot_max'] = summ['total_review'].cumsum()
+        summ['cum_approve'] = summ['total_review'].cumsum()
+        summ['cum_approve_pct'] = summ['cum_approve'] / summ['cum_tot_max']
+
+        results[scenario_name] = summ[['Risk_Tier', 'SIGMAFIRSTPARTYFRAUDSCORE', 'cum_approve_pct', 'cum_approve', 'total_review']]
+
+    return results
+
+# Apply the function across all datasets in df_dict
+risk_scenario_formatted_results = {}
+for name, df in df_dict.items():
+    risk_scenario_formatted_results[name] = generate_summ_df_with_scenarios_formatted(df)
+
+# Display results for all datasets
+for dataset_name, scenario_results in risk_scenario_formatted_results.items():
+    for scenario, df_result in scenario_results.items():
+        import ace_tools as tools
+        tools.display_dataframe_to_user(name=f"{dataset_name}_{scenario}", dataframe=df_result)
