@@ -64,3 +64,9 @@ for dataset_name, scenario_results in risk_scenario_formatted_results.items():
     for scenario, df_result in scenario_results.items():
         import ace_tools as tools
         tools.display_dataframe_to_user(name=f"{dataset_name}_{scenario}", dataframe=df_result)
+
+# Display results for all datasets without using ace_tools
+for dataset_name, scenario_results in risk_scenario_formatted_results.items():
+    for scenario, df_result in scenario_results.items():
+        print(f"\nDataset: {dataset_name} - {scenario}")
+        print(df_result.to_string(index=False))
